@@ -1,6 +1,6 @@
-# COMS3010A — Operating Systems and System Programming
+#Operating Systems and System Programming
 
-Labs, projects, and coursework for **Operating Systems and System Programming** (COMS3010A), University of the Witwatersrand.
+Labs, projects, and coursework for **Operating Systems and System Programming**.
 
 ## 📚 About the Course
 
@@ -12,7 +12,7 @@ This course covers the fundamental abstractions, mechanisms, and implementations
 - **Memory** — address translation, paging, swapping
 - **Persistence** — filesystems and storage
 
-Reference textbook: [Operating Systems: Three Easy Pieces](https://pages.cs.wisc.edu/~remzi/OSTEP/)
+
 
 ## 🗂️ Repository Structure
 
