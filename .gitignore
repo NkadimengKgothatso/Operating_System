@@ -1,0 +1,8 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Short Order runtime artifacts (project2)
+projects/project2-cpu-scheduler/short-order-student-0.3.0/replays/*
+!projects/project2-cpu-scheduler/short-order-student-0.3.0/replays/README.md
