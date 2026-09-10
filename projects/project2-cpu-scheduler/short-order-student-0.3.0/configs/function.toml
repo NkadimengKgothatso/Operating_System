@@ -1,0 +1,108 @@
+# "private function": a dozen large orders, all at once, and nothing after.
+#
+# Every other profile is event-dense. Orders arrive every few ticks and dishes
+# come out of the oven, so a scheduler is called six hundred times in a
+# seventeen-hundred-tick service and is never more than a moment away from its
+# next chance to change its mind. On those profiles `wake_in` earns nothing:
+# an event always beats the timer to it. Waking on *every tick* of the course
+# profile moves the score by less than two hundredths of a point.
+#
+# This profile is the opposite, and it exists to make the timer interrupt
+# matter. The whole party is on the rail when service opens, nothing else ever
+# arrives, and no dish goes in an oven - so after the first tick the only
+# events left are "a dish is finished" and "a customer left". Start a
+# two-hundred-tick main and the kitchen will not ask you anything for two
+# hundred ticks unless you ask it to.
+#
+# So the choice this profile puts to a scheduler is the one round robin was
+# invented for. Run each order to completion and the last table waits for the
+# whole service before anybody so much as looks at them. Rotate, and everybody
+# is served something early but everybody finishes late - and every rotation
+# costs a switch. There is no way to rotate at all without `wake_in`.
+
+[kitchen]
+name = "private function"
+cores = 2
+switch_cost = 2
+# Long enough to drain: fourteen orders averaging about 210 ticks of work over
+# two cooks needs roughly 1500, with room for the switching a rotation costs.
+max_ticks = 3000
+known_durations = true
+seed = 1234
+
+[workload]
+# Everybody is seated before the doors open, and nobody arrives afterwards.
+arrival_window = 1
+mean_interarrival = 100000.0
+warmup_orders = 14
+max_orders = 14
+
+# --- the menu ------------------------------------------------------------------
+#
+# One work step each and no oven, deliberately: an oven step would hand the
+# scheduler a free event every time a dish came out, which is exactly what this
+# profile is built to withhold. The spread of lengths is wide, so shortest-job
+# first has something real to say - it simply has to say it without ever being
+# asked twice.
+
+[[recipe]]
+name = "canape"
+weight = 3.0
+priority = 2
+patience = [700, 900]
+steps = [{ label = "assemble", kind = "work", ticks = [25, 45], station = "board" }]
+
+[[recipe]]
+name = "main"
+weight = 4.0
+priority = 1
+patience = [1400, 1800]
+steps = [{ label = "cook", kind = "work", ticks = [180, 260], station = "board" }]
+
+[[recipe]]
+name = "centrepiece"
+weight = 2.0
+priority = 1
+patience = [2000, 2600]
+steps = [{ label = "build", kind = "work", ticks = [380, 520], station = "board" }]
+
+[[station]]
+name = "board"
+capacity = 2
+label = "prep bench"
+
+# --- what it is marked on ------------------------------------------------------
+#
+# Its own weights, because it is asking its own question.
+#
+# Under the course weights a rotation is never worth it here: waking to share
+# the cooks around takes response from 343 ticks to 32 - a tenfold improvement,
+# the largest of any behaviour on any profile - and still loses by fifteen
+# points, because rotating costs the whole of the switching component and
+# switching is worth 15. A profile where the answer is "no" whatever you do is
+# not asking anything.
+#
+# So responsiveness is worth more here and switching less. Switching is not
+# free - it should not be, the switches are real - but it no longer decides the
+# question on its own. The scales are lengthened to match a service where the
+# shortest dish is twenty-five ticks and the longest five hundred: a mean
+# response of 25 ticks is not a meaningful half-marks point when nothing can
+# be done in under 25.
+
+[scoring]
+response_scale = 90.0
+turnaround_scale = 400.0
+slowdown_bound = 25.0
+
+# Seven profiles reward getting dishes finished. This one rewards not leaving
+# anybody unlooked-at, which is the other half of the argument and the reason
+# round robin exists at all. A scheduler that wins everywhere else and loses
+# here has learnt one lesson and not the other - which is the point of marking
+# on the mean across profiles rather than on the course profile alone.
+[scoring.weights]
+completion = 0.25
+response = 0.30
+turnaround = 0.075
+slowdown = 0.075
+switching = 0.05
+fairness = 0.25
