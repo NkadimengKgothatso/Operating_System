@@ -24,39 +24,35 @@ class MyScheduler(Scheduler):
     name = "least_slack_chef"
     version = "2"
 
-    # How many ticks of slack still counts as "in no immediate danger".
-    # Scaled off switch_cost since that is the only natural timescale the
-    # kitchen gives us.
-    #
-    # A first attempt used 4. Against the reference schedulers on this
-    # profile, that turned out to classify a large share of the rail as
-    # "critical" at any given moment - not because those orders were truly
-    # about to be lost, but just because their slack had dipped under a
-    # fairly generous bar. Once something is "critical" it is scheduled by
-    # raw slack instead of by length, so short new arrivals kept queuing
-    # behind a constant churn of borderline-critical orders: response ended
-    # up roughly twice sous_chef's (pure SRTF, no deadline logic at all)
-    # for barely better completion. A small margin means only orders that
-    # are *actually* close to being lost get the deadline override; run
-    # `evaluate` after changing this to see the real tradeoff for whatever
-    # profile you are tuning against.
-    CRITICAL_MARGIN_SWITCHES = 1
+    # How many ticks of slack still counts as "in no immediate danger" -
+    # below this, an order is ranked by raw slack (deadline urgency)
+    # instead of by length. Manual tuning through 1 and 4 both did worse
+    # than expected: even a small margin classified a meaningful share of
+    # the rail as "critical" often enough to disrupt SRTF's ordering for no
+    # real gain in completion. A systematic sweep across CRITICAL_MARGIN,
+    # PREEMPT_MARGIN and AGE_RATE together (`launch.py evaluate --json`,
+    # grid search, ranked by mean score over seeds 1000..1020) found 0 to
+    # be the actual optimum on this profile: the explicit deadline-rescue
+    # tier is not pulling its weight once the "safe" ranking is tuned well
+    # - aged SRTF alone already finishes short jobs fast enough that very
+    # few orders need rescuing, and the tier's disruption cost more than it
+    # saved. This is a real finding, not a default; it is worth re-checking
+    # on profiles with tighter deadlines (`rush`, `banquet-night`), where a
+    # dedicated rescue mechanism may earn its keep again.
+    CRITICAL_MARGIN_SWITCHES = 0
 
     # How much more urgent a waiting order has to be, in units of
     # switch_cost, before it is worth pulling a cook off what it is doing.
     #
-    # 2 is the break-even point on raw ticks (one switch away, one switch
-    # back to resume) - the assumption being that a preemption should not
-    # cost more in switching than it buys in urgency. Against the reference
-    # schedulers, that assumption didn't hold up: sous_chef (naive
-    # preemptive SRTF, no cost-benefit gating at all) only keeps 78% of its
-    # switches "necessary" - far below this scheduler's 97%+ - and still
-    # wins on response and turnaround by a wide margin. Those three latency
-    # components are worth 40 of the 100 points combined, switching only 15,
-    # so guarding switching efficiency this tightly has been the wrong
-    # trade. 0 means: preempt for any waiting order that is more urgent at
-    # all, and let the score say whether that goes too far the other way.
-    PREEMPT_MARGIN_SWITCHES = 2
+    # 2 was the first guess: the break-even point on raw ticks (one switch
+    # away, one switch back to resume). The same sweep found the score
+    # kept improving as this went *up* - i.e. as preemption became *more*
+    # conservative - plateauing around 12-16 and turning over past ~24.
+    # That was the opposite of the expected direction: every preemption
+    # avoided is capacity that goes toward actually finishing orders
+    # instead of overhead, and completion rose alongside response as this
+    # increased. 16 sits in the middle of that plateau.
+    PREEMPT_MARGIN_SWITCHES = 16
 
     def reset(self, seed):
         """Nothing to carry between runs - every decision below is made
@@ -105,25 +101,29 @@ class MyScheduler(Scheduler):
         # unbroken stream of short arrivals and wait a very long time before
         # its slack finally shrinks enough to be treated as critical.
         #
-        # The first attempt at fixing that - dividing est(order) by
-        # (1 + order.waited) - overcorrected badly. Division is far more
-        # aggressive than it looks: a 15-tick job that has waited only 20
-        # ticks scores margin + 15/21 (~0.7), enough to outrank a brand new
-        # 5-tick job. Any order that had waited even a little started
-        # beating fresh short arrivals, which is exactly backwards - it
-        # explains why fairness stayed strong (old orders did get rescued)
-        # while response stayed bad the whole time (new short jobs kept
-        # losing their turn to merely-old medium ones, not to genuinely
-        # urgent ones).
+        # Dividing est(order) by (1 + order.waited) overcorrected badly:
+        # division is far more aggressive than it looks, and any order that
+        # had waited even a little started beating fresh short arrivals.
         #
-        # A fresh order (waited = 0) should rank almost exactly like SRTF; an
-        # order should only start meaningfully out-competing shorter jobs
-        # once it has waited a *long* time, not a handful of ticks. AGE_RATE
+        # A threshold-triggered boost was also tried: leave ranking alone
+        # below a "waited more than N times its own size" ratio, then treat
+        # the order as critical past it - the textbook HRRN idea. It did
+        # recover fairness, but cost more response than it should have:
+        # short jobs trip a ratio limit almost immediately (a 2-tick job
+        # crosses a limit of 3 after waiting just 4 ticks), so it ended up
+        # disrupting far more of the queue than intended, not less.
+        #
+        # The simple version below - subtract a small, constant amount per
+        # tick waited, floored so it can never push a safe order below
+        # `margin` - beat both alternatives on the actual score. AGE_RATE
         # controls how many ticks of "shorter job" advantage one tick of
-        # waiting buys back; the subtraction is floored at zero so aging can
-        # never push a safe order's value below `margin` and make it look
-        # more urgent than a genuinely critical one.
-        AGE_RATE = 0.1
+        # waiting buys back. A grid search over AGE_RATE alongside the two
+        # margins above (`launch.py evaluate --json`, ranked by mean score)
+        # found the optimum sitting low, around 0.02-0.04 - gentler than
+        # the first manual guess of 0.1 - with the plateau's exact edges
+        # inside a single seed's worth of noise, so 0.03 is the middle of
+        # that plateau rather than a sharp peak.
+        AGE_RATE = 0.03
 
         # slack is the deadline minus the work remaining - but an order also
         # cannot start (or resume, if it was preempted earlier) for free: at
